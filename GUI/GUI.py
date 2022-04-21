@@ -1,7 +1,11 @@
 from tkinter import *
 from network.TCP_connect import *
 from tkinter import messagebox
+from tkinter import filedialog as fd
+
+import os
 import ctypes
+import json
 
 class AppGUI():
 
@@ -12,6 +16,8 @@ class AppGUI():
     is_quit = False
     is_msg_quit = False
     to_send = False
+    fileToAttach = None
+    fileToAttachPar = None
 
     def __init__(self):
         self.window = Tk()
@@ -23,7 +29,7 @@ class AppGUI():
 
         self.window.geometry('300x200-'+str(int(self.screen_width/2))+'+'+str(int(self.screen_height/2)))
 
-        B = Button(self.window, text="Connect", command=self.startConn).grid(row=0, column=3)
+        B = Button(self.window, text="Connect", command=self.openNewConnection).grid(row=0, column=3)
         B = Button(self.window, text="Quit", command=self.quitApp).grid(row=1, column=3)
 
         Label(self.window, text="Enter self ip").grid(row=0)
@@ -50,7 +56,28 @@ class AppGUI():
     def toSend(self):
         self.to_send = True
 
-    def startConn(self):
+    def attachFile(self):
+
+        filetypes = (
+            ('png', '*.png'),
+            ('jpg', '*.jpg'),
+            ('jpeg', '*.jpeg'),
+            ('txt', '*.txt')
+        )
+
+        self.fileToAttach = fd.askopenfilename(
+            title='Select file',
+            initialdir='/',
+            filetypes=filetypes)
+
+        print(self.fileToAttach)
+        file_name, file_extension = os.path.splitext(self.fileToAttach)
+        self.fileToAttachPar = json.dumps({
+                                        "name": file_name,
+                                        "ext": file_extension
+                                        })
+
+    def openNewConnection(self):
         self.address_client = self.e1.get()
         self.port_client = self.e2.get()
         if not (self.address_server or self.port_server or self.address_client or self.port_client):
@@ -65,19 +92,30 @@ class AppGUI():
         self.window.destroy()
         self.window = Tk()
         self.window.title("ProjectBSK Messenger")
-        self.window.geometry('300x200-' + str(int(self.screen_width / 2)) + '+' + str(int(self.screen_height / 2)))
-        B = Button(self.window, text="Quit", command=self.quitApp).grid(row=1, column=3)
+        self.window.geometry('600x300-' + str(int(self.screen_width / 2)) + '+' + str(int(self.screen_height / 2)))
+        B = Button(self.window, text="Quit", command=self.quitApp).grid(row=2, column=3)
+        B = Button(self.window, text="Attach file", command=self.attachFile).grid(row=1, column=3)
         B = Button(self.window, text="Send", command=self.toSend).grid(row=0, column=3)
+        Label(self.window, text="Recieved messages").grid(row=3, column=0)
         T = Text(self.window, height = 11, width = 11)
-        T.grid(row=2, column=0)
+        T.grid(row=4, column=0)
         self.e1 = Entry(self.window)
         self.e1.grid(row=0, column=0)
+        self.e2 = Entry(self.window)
+        Label(self.window, text="Path for downloaded files").grid(row=1, column=0)
+        self.e2.grid(row=2, column=0)
+        self.e2.insert(END, "C:/Users/Holodilnik/Desktop/ddddddd/")
 
         while not self.is_quit:
             msg = self.e1.get()
+            self.client.setDownloadsPath(self.e2.get())
             if msg and self.to_send:
                 self.server.sendMsg(msg)
                 self.to_send = False
+            if self.fileToAttach:
+                print(self.fileToAttachPar)
+                self.server.sendFile(self.fileToAttach, self.fileToAttachPar)
+                self.fileToAttach = None
             msg = self.client.getMsgToShow()
             if msg:
                 msg = msg + '\n'
