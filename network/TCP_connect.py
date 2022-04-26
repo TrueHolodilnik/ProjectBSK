@@ -5,130 +5,175 @@ import queue
 import json
 import time
 import os
-from crypto import *
 
-class BSKServer(threading.Thread):
+from cryptom.Encryption import Encryptor
 
-    def __init__(self, self_ip, self_port):
+
+class Connector:
+
+    def __init__(self):
+
+        self.__portToBind = 54321
+        self.__portToConnect = 54322
+        self.__encryptor = Encryptor()
+
+        self_ip = socket.gethostbyname(socket.gethostname())
+        self.__socketSender = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.__socketReceiver = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.__socketReceiver.bind(("25.70.194.69", 54322))
+        self.__socketReceiver.listen(5)
+        self.__receiver = Receiver(self.__socketReceiver, self.__encryptor)
+        self.__sender = Sender(self.__socketSender, self.__encryptor)
+        self.__receiver.start()
+
+        self.selfPublicKey = None
+        self.targetPublicKey = None
+
+    def __del__(self):
+        self.__receiver.kill()
+        return
+
+    def createSender(self, ip):
+        if self.__socketSender:
+            self.__socketSender.close()
+
+        self.__socketSender = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.__socketSender.bind(("25.70.194.69", self.__portToBind))
+        self.__socketSender.connect((ip, self.__portToConnect))
+
+        self.__sender.setSock(self.__socketSender)
+
+    def getEncryptor(self):
+        return self.__encryptor
+
+    def getSender(self):
+        return self.__sender
+
+    def getReciever(self):
+        return self.__receiver
+
+    def getSocketSender(self):
+        return self.__socketSender
+
+    def getSocketReciever(self):
+        return self.__socketReceiver
+
+
+class Receiver(threading.Thread):
+
+    def __init__(self, socketReciver, __encryptor):
 
         threading.Thread.__init__(self)
-        self.is_running = True
-        self.self_ip = self_ip
-        self.self_port = self_port
-        self.messages_to_show = queue.LifoQueue()
-        self.fileToSend = None
-        self.fileToSendPar = None
+        self.__encryptor = __encryptor
+        self.__target_address = None
+        self.__socketReceiver = socketReciver
+        self.__running = True
+        self.__messages_to_show = queue.LifoQueue()
+        self.__fileToSend = None
+        self.__fileToSendPar = None
+        self.__conn = None
+        self.__downloadsPath = None
 
-    def sendMsg(self, msg):
-        self.messages_to_show.put(msg)
-
-    def sendFile(self, file, par):
-        print("Server file accepted to sending")
-        self.fileToSend = file
-        self.fileToSendPar = par
-
-
-
-    def run(self):
-
-        print("Server starting")
-
-        # Create a TCP/IP socket
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        # self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        # Connect the socket to the port where the server is listening
-        self.self_address = (self.self_ip, self.self_port)
-        self.sock.bind((self.self_ip, self.self_port))
-        self.sock.listen(5)
-
-        while self.is_running:
-            msg = self.getMsgToShow()
-            if msg:
-                self.conn, self.target_address = self.sock.accept()
-                self.conn.send(msg.encode())
-                self.conn.close()
-            elif self.fileToSend:
-                self.conn, self.target_address = self.sock.accept()
-                print("sent marker" + self.fileToSendPar)
-                self.conn.send(self.fileToSendPar.encode())
-                print("file to send " + self.fileToSend)
-                f = open(self.fileToSend, 'rb')
-                l = f.read(1024)
-                while (l):
-                    print("Sending...")
-                    self.conn.send(l)
-                    l = f.read(1024)
-                time.sleep(3)
-                self.conn.send(b"DONE")
-                print("Sending DONE")
-                f.close()
-                self.conn.close()
-                self.fileToSend = None
-                self.fileToSendPar = None
-
-    def getMsgToShow(self):
-        if self.messages_to_show.empty():
-            return None
-        return self.messages_to_show.get_nowait()
-
-    def kill(self):
-        self.is_running = False
-
-
-class BSKClient(threading.Thread):
-
-    def __init__(self, target_host, target_port):
-        threading.Thread.__init__(self)
-        self.host = target_host
-        self.target_port = target_port
-        self.running = 1
-        self.messages_to_show = queue.LifoQueue()
-        self.downloadsPath = None
-
-    def getMsgToShow(self):
-        if self.messages_to_show.empty():
-            return None
-        return self.messages_to_show.get_nowait()
+    def __del__(self):
+        self.kill()
+        return
 
     def setDownloadsPath(self, path):
-        self.downloadsPath = path
+        self.__downloadsPath = path
 
     def run(self):
 
-        print("Client starting")
-
-        while self.running:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.connect((self.host, self.target_port))
-            msg = self.sock.recv(1024).decode()
+        msg = None
+        while self.__running:
+            if self.__target_address is None:
+                self.__conn, self.__target_address = self.__socketReceiver.accept()
+                print(self.__target_address)
+            try:
+                msg = self.__conn.recv(1024).decode()
+            except socket.error:
+                print("Socket recieving error, " + socket.error.with_traceback().strerror)
             if msg:
-                test = None
+                msg = self.__encryptor.decryptBlock(msg)
                 try:
                     test = json.loads(msg)
                     print("JSON test acc")
                     if type(test) == int:
                         continue
                     if test["ext"]:
-                        print("recieved marker:")
+                        print("received marker:")
                         print(test)
-                        f = open(self.downloadsPath + os.path.basename(test["name"]) + test["ext"], "wb")
-                        l = self.sock.recv(1024)
-                        while (l != b"DONE"):
-                            if l:
-                                f.write(l)
-                            l = self.sock.recv(1024)
-                        print("recieved DONE")
+                        f = open(self.__downloadsPath + os.path.basename(test["name"]) + test["ext"], "wb")
+                        buff = self.__conn.recv(8 * 1024)
+                        while buff != b"DONE":
+                            if buff:
+                                f.write(buff)
+                            buff = self.__conn.recv(8 * 1024)
+                        print("received DONE")
                         f.close()
                 except ValueError as e:
                     print("JSON test failed")
-                    self.messages_to_show.put(msg)
+                    msg = msg + '\n'
+                    self.__messages_to_show.put(msg)
                     continue
 
-            self.sock.close()
+    def getMsgToShow(self):
+        if self.__messages_to_show.empty():
+            return None
+        return self.__messages_to_show.get_nowait()
+
+    def getAddress(self):
+        return self.__target_address
+
+    def setAddress(self, address):
+        self.__target_address = address
 
     def kill(self):
-        self.running = 0
+        self.__running = False
+
+    def getConn(self):
+        return self.__conn
 
 
+class Sender:
+
+    def __init__(self, ___socketSender, __encryptor):
+        self.__encryptor = __encryptor
+        self.__conn = None
+        self.__target_address = None
+        self.__socketSender = ___socketSender
+        self.__messages_to_show = queue.LifoQueue()
+
+    def __del__(self):
+        return
+
+    def setTargetAddress(self, address):
+        self.__target_address = address
+
+    def setSock(self, _sock):
+        self.__socketSender = _sock
+
+    def sendMessage(self, msg):
+        self.__socketSender.send(msg.encode())
+
+    def sendFile(self, file):
+        file_name, file_extension = os.path.splitext(file)
+        filePar = json.dumps({
+            "name": file_name,
+            "ext": file_extension
+        })
+        msg = filePar.encode()
+        msg = self.__encryptor.encryptBlock(msg)
+        self.__socketSender.send(msg)
+
+        f = open(file, 'rb')
+        buff = f.read(8 * 1024)
+        print("Sending...")
+        while buff:
+            self.__socketSender.send(self.__encryptor.encryptBlock(buff))
+            buff = f.read(8 * 1024)
+
+        time.sleep(3)
+
+        self.__socketSender.send(self.__encryptor.encryptBlock(b"DONE"))
+        print("Sending DONE")
+        f.close()
